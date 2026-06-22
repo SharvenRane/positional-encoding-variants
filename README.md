@@ -1,91 +1,61 @@
-# Positional Encoding Variants
+# positional-encoding-variants
 
-RoPE, ALiBi, sinusoidal, and learned positional encodings — compared experimentally
+Three ways to tell a transformer where each token sits in a sequence, implemented in PyTorch with property based tests. The point of this repo is to keep the math honest: each variant lives in one small module and each test checks a behavior that the math actually guarantees.
 
-`positional-encoding` `transformer` `rope` `alibi` `pytorch`
+## What is included
 
-## Overview
+**Sinusoidal encoding.** The fixed scheme from the original attention paper. Even channels carry a sine wave, odd channels carry the matching cosine, and the wavelength grows geometrically across the channel dimension. Nothing here is learned, so the encoding is the same every run and every value stays inside the range minus one to one.
 
-This repository implements a complete pipeline for **positional encoding variants**, covering
-data preprocessing, model training, evaluation, and deployment.
+**Learned encoding.** A plain embedding table indexed by position. The model learns one vector per position during training, which is the approach used by models like BERT. It is flexible but it cannot generalize past the longest position it was trained on.
 
-## Features
+**Rotary encoding (RoPE).** Instead of adding a vector, RoPE rotates each query and key inside a set of two dimensional subspaces by an angle that depends on the position. Because a rotation never changes the length of a vector, the norm of every token is preserved, and the dot product of a rotated query and key ends up depending only on the difference between their positions. That relative property is what makes RoPE attractive.
 
-- Clean, modular PyTorch implementation
-- Reproducible experiments with MLflow tracking
-- Comprehensive evaluation with standard benchmarks
-- ONNX export for production deployment
-- Detailed documentation and usage examples
-
-## Installation
-
-```bash
-git clone https://github.com/YOUR_USERNAME/positional-encoding-variants.git
-cd positional-encoding-variants
-pip install -r requirements.txt
-```
-
-## Quick Start
-
-```python
-from src.model import Model
-from src.trainer import Trainer
-from src.config import Config
-
-config = Config.from_yaml("configs/default.yaml")
-model = Model(config)
-trainer = Trainer(model, config)
-trainer.train()
-```
-
-## Project Structure
+## Layout
 
 ```
-positional-encoding-variants/
-├── src/
-│   ├── model.py        # Model architecture
-│   ├── dataset.py      # Data loading and preprocessing
-│   ├── trainer.py      # Training loop
-│   ├── evaluate.py     # Evaluation metrics
-│   └── utils.py        # Helper utilities
-├── configs/
-│   └── default.yaml    # Default configuration
-├── notebooks/
-│   └── exploration.ipynb
-├── tests/
-│   └── test_model.py
-├── requirements.txt
-└── README.md
+src/encodings.py     the three encodings plus a functional RoPE helper
+tests/               pytest property and behavior checks
+requirements.txt     torch and pytest
 ```
-
-## Results
-
-| Model | Dataset | Metric | Score |
-|-------|---------|--------|-------|
-| Baseline | Standard | Primary | - |
-| Ours | Standard | Primary | - |
 
 ## Usage
 
-```bash
-# Train
-python train.py --config configs/default.yaml
+```python
+import torch
+from src.encodings import (
+    SinusoidalPositionalEncoding,
+    LearnedPositionalEncoding,
+    apply_rotary_embedding,
+)
 
-# Evaluate
-python evaluate.py --checkpoint checkpoints/best.pth
+x = torch.randn(2, 10, 32)          # batch, sequence, model dim
 
-# Export to ONNX
-python export.py --checkpoint checkpoints/best.pth
+sin_enc = SinusoidalPositionalEncoding(d_model=32)
+x_sin = sin_enc(x)                  # adds the fixed table
+
+learned = LearnedPositionalEncoding(d_model=32)
+x_learned = learned(x)             # adds the learned table
+
+# RoPE works on attention heads, shape batch, sequence, heads, head_dim
+q = torch.randn(2, 10, 4, 16)
+q_rotated = apply_rotary_embedding(q)
 ```
 
-## References
+## What the tests check
 
-- Relevant papers and resources for positional encoding variants
+These are behavior checks rather than trivial asserts.
 
-## License
+* Sinusoidal output has the right shape and every entry lands in minus one to one.
+* At position zero the sine channels are zero and the cosine channels are one, which is a closed form value the formula must produce.
+* The learned encoding returns the right shape and exposes exactly one trainable embedding table.
+* RoPE preserves the L2 norm of every vector after rotation.
+* RoPE leaves position zero untouched and does change later positions.
+* The functional helper and the module wrapper agree.
+* Rotating a query and key by the same positional shift leaves their inner product unchanged, which is the relative position property RoPE is designed for.
 
-MIT
+## Running
 
-# update 5
-
-# update 11
+```
+pip install -r requirements.txt
+python -m pytest tests/ -q
+```
